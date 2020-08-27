@@ -5,10 +5,29 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use tracing_distributed::{Event, Span, Telemetry};
 
+/// Data that will be sent to Honeycomb
+pub type Data = HashMap<String, ::libhoney::Value>;
+
+/// Sampler is a trait for implementing sampling for honeycomb.
+pub trait Sampler: std::fmt::Debug + Send + Sync + 'static {
+    /// Get the data and return a sample rate
+    fn sample(&self, data: &Data) -> usize;
+}
+
+#[derive(Debug)]
+struct DefaultSampler {} 
+
+impl Sampler for DefaultSampler {
+    fn sample(&self, _data: &Data) -> usize {
+        1
+    }
+}
+
 /// Telemetry capability that publishes events and spans to Honeycomb.io.
 #[derive(Debug)]
 pub struct HoneycombTelemetry {
     honeycomb_client: Mutex<libhoney::Client<libhoney::transmission::Transmission>>,
+    sampler: Box<dyn Sampler>
 }
 
 impl HoneycombTelemetry {
@@ -19,13 +38,20 @@ impl HoneycombTelemetry {
         // FIXME: may not be performant, investigate options (eg mpsc)
         let honeycomb_client = Mutex::new(honeycomb_client);
 
-        HoneycombTelemetry { honeycomb_client }
+        HoneycombTelemetry { honeycomb_client, sampler: Box::new(DefaultSampler {}) }
+    }
+
+    /// Set a sampler
+    pub fn set_sampler(&mut self, sampler: Box<dyn Sampler>) {
+        self.sampler = sampler;
     }
 
     fn report_data(&self, data: HashMap<String, ::libhoney::Value>) {
         // succeed or die. failure is unrecoverable (mutex poisoned)
         let mut client = self.honeycomb_client.lock().unwrap();
         let mut ev = client.new_event();
+        let sample_rate = self.sampler.sample(&data);
+        ev.set_sample_rate(sample_rate);
         ev.add(data);
         let res = ev.send(&mut client);
         if let Err(err) = res {

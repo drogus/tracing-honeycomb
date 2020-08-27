@@ -14,7 +14,7 @@
 mod honeycomb;
 mod visitor;
 
-pub use crate::honeycomb::{HoneycombTelemetry, SpanId, TraceId};
+pub use crate::honeycomb::{HoneycombTelemetry, SpanId, TraceId, Sampler, Data};
 pub use crate::visitor::HoneycombVisitor;
 use rand::{self, Rng};
 #[doc(no_inline)]
@@ -62,11 +62,14 @@ pub fn new_blackhole_telemetry_layer(
 pub fn new_honeycomb_telemetry_layer(
     service_name: &'static str,
     honeycomb_config: libhoney::Config,
+    sampler: Box<dyn Sampler>,
 ) -> TelemetryLayer<HoneycombTelemetry, SpanId, TraceId> {
     let instance_id: u64 = rand::thread_rng().gen();
+    let mut honeycomb_telemetry = HoneycombTelemetry::new(honeycomb_config);
+    honeycomb_telemetry.set_sampler(sampler);
     TelemetryLayer::new(
         service_name,
-        HoneycombTelemetry::new(honeycomb_config),
+        honeycomb_telemetry,
         move |tracing_id| SpanId {
             instance_id,
             tracing_id,
